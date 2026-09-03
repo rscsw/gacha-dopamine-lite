@@ -361,21 +361,16 @@ def pull_one(data, gacha_name=None, gacha=None):
                     rarity = available[0]
             else:
                 rarity = pity_rarity
-        # LEGEND 등급은 SSR~N을 모두 모은 뒤에만 등장, 그 전까지는 나머지 등급으로 치환
+        # LEGEND 등급은 SSR~N을 모두 모은 뒤에만 등장, 그 전까지는 SSR로 치환
         if rarity == "LEGEND" and not _is_legend_unlocked(data, gacha_name):
-            non_legend_rarities = [r for r in RARITIES if r[0] != "LEGEND"]
-            available = [r[0] for r in non_legend_rarities if r[0] in items and items[r[0]]]
-            if available:
-                filtered = [(n, w) for n, w, *_ in non_legend_rarities if n in available]
-                if filtered:
-                    names = [n for n, _ in filtered]
-                    weights = [w for _, w in filtered]
-                    rarity = random.choices(names, weights=weights, k=1)[0]
-                else:
-                    # 확률 정보가 없으면 균등 치환
-                    rarity = random.choice(available)
-            else:
+            # 미해금 상태에서 LEGEND가 추첨되면 SSR 아이템으로 대체
+            if pity_rarity in items and items[pity_rarity]:
                 rarity = pity_rarity
+            else:
+                # SSR 아이템이 없는 예외적 설정 방어: 다른 가용 등급 중 가장 희귀한 것으로 대체
+                _ensure_rarity_cache()
+                available = [r for r in _RARITY_ORDER if r != "LEGEND" and r in items and items[r]]
+                rarity = available[0] if available else pity_rarity
 
     # 방어: 아이템이 없으면 더미 아이템 생성
     if rarity not in items or not items[rarity]:
