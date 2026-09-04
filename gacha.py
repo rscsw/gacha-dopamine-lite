@@ -6,10 +6,11 @@ from pathlib import Path
 
 SAVE_FILE = Path(__file__).with_name("gacha_save.json")
 
-# 시작 코인 / 1회 뽑기 가격 / 10연차 가격 / 천장 한도
+# 시작 코인 / 1회 뽑기 가격 / 10연챠 가격 / 100연챠 가격 / 천장 한도
 START_COINS = 10_000_000
 SINGLE_COST = 100
 TEN_COST = 1_000
+HUNDRED_COST = 10_000
 PITY_LIMIT = 1_000
 
 BLACK  = "\033[30m"
@@ -35,11 +36,11 @@ RESET = "\033[0m"
 # 이름, 확률, 중복 시 환급 코인, 색상, 심볼을 자유롭게 수정할 수 있습니다.
 # 형식: (레어리티 이름, 확률(%), 중복 환급 코인, 색상(ANSI), 심볼)
 RARITIES = [
-    ("LEGEND", 0.1, 100, BRIGHT_RED, "☆"),
+    ("LEGEND", 0.05, 100, BRIGHT_RED, "☆"),
     ("SSR", 0.5, 50, YELLOW, "★★★"),
     ("SR", 2, 10, BRIGHT_BLUE, "★★"),
     ("R", 10, 5, BRIGHT_CYAN, "★"),
-    ("N", 87.4, 1, WHITE, ""),
+    ("N", 87.45, 1, WHITE, ""),
 ]
 
 # ── RARITIES 캐시 (가독성을 해치지 않는 선에서 반복 연산 절감) ──
@@ -83,72 +84,71 @@ def _ensure_rarity_cache():
 # ── 가챠 종류 정의 ──
 # 레어리티(확률/환급/색상/심볼), 가격, 천장 한도는 전역 상수(RARITIES/SINGLE_COST/TEN_COST/PITY_LIMIT)로 통일됩니다.
 # 가챠별로 items(보상 목록)와 천장 도달율(진행도)만 따로 관리됩니다.
-# 아이템 정의는 외부 JSON(gacha_items.json)에서 로드하여 코드 수정 없이 아이템을 관리할 수 있습니다.
+# 아이템 정의는 외부 JSON(gacha_items.json)에서만 관리되며, 파일이 없거나 파싱에 실패하면 게임 플레이가 차단됩니다.
 GACHA_ITEMS_FILE = Path(__file__).with_name("gacha_items.json")
 
-_DEFAULT_GACHAS = {
-    "별빛 가챠": {
-        "items": {
-            "LEGEND": ["별의 수호자", "빛의 정령"],
-            "SSR": ["전설의 황금 고양이", "우주를 삼킨 슬라임", "시간을 거스르는 토끼", "신비한 검은 별"],
-            "SR": ["반짝이는 여우", "달빛 마법서", "행운의 부적", "구름 위의 집", "푸른 불꽃"],
-            "R": ["맛있는 쿠키", "작은 화분", "낡은 게임기", "고양이 스티커", "반짝이는 돌"],
-            "N": ["돌멩이", "나뭇가지", "빈 상자", "구겨진 영수증", "평범한 양말"],
-        },
-        "desc": "아름다운 별빛을 모아보세요!",
-    },
-    "심해 가챠": {
-        "items": {
-            "LEGEND": ["심해의 크라켄", "심연의 진주"],
-            "SSR": ["공기방울 트랩", "아쿠아마린 열쇠", "고대 해룡", "깊은 밤 등대"],
-            "SR": ["발광 해파리", "산호 마법사", "조개 보물상자", "파도 정령", "인어의 노래"],
-            "R": ["반짝이는 조약돌", "소라 껍데기", "작은 거북이", "물고기 떼", "해초 다발"],
-            "N": ["젖은 모래", "빈 병", "낡은 밧줄", "물방울", "조그만 돌"],
-        },
-        "desc": "깊은 심해를 탐험해 보세요!",
-    },
-    "도심 가챠": {
-        "items": {
-            "LEGEND": ["낡은 플로피 디스크", "네온사인 유령"],
-            "SSR": ["네온 황제 고양이", "야경의 지배자", "전설의 택시 기사", "옥상 위의 달"],
-            "SR": ["반짝이는 간판", "심야 라면", "행운의 동전", "빗속 우산", "도시의 바람"],
-            "R": ["종이컵", "전단지", "낡은 이어폰", "버스 티켓", "작은 화분"],
-            "N": ["구겨진 영수증", "빈 캔", "돌멩이", "나뭇잎", "플라스틱 조각"],
-        },
-        "desc": "도심 속 숨겨진 보물을 찾아보세요!",
-    },
-}
+# 파일 로드 실패 시 에러 메시지를 저장 — 게임 진입 차단에 사용
+GACHAS_LOAD_ERROR: str | None = None
 
 
 def _load_gachas():
-    """gacha_items.json에서 가챠 아이템 정의를 로드. 실패 시 기본값 반환."""
+    """gacha_items.json에서 가챠 아이템 정의를 로드. 실패 시 예외를 발생시켜 게임을 차단한다."""
     if not GACHA_ITEMS_FILE.exists():
-        return _DEFAULT_GACHAS
+        raise FileNotFoundError(f"{GACHA_ITEMS_FILE.name} 파일을 찾을 수 없습니다.")
     try:
         with GACHA_ITEMS_FILE.open("r", encoding="utf-8") as f:
             data = json.load(f)
-        # 기본 검증: dict 형태이고 각 가챠에 items/desc가 있는지 확인
-        if not isinstance(data, dict) or not data:
-            print(f"경고: {GACHA_ITEMS_FILE.name} 형식이 올바르지 않아 기본 아이템을 사용합니다.")
-            return _DEFAULT_GACHAS
-        # 최소 검증 — items가 없는 가챠는 기본값으로 대체하지 않고 경고만
-        for name, gacha in list(data.items()):
-            if not isinstance(gacha, dict) or "items" not in gacha:
-                print(f"경고: 가챠 '{name}' 정의가 올바르지 않아 제외됩니다.")
-                data.pop(name, None)
-        if not data:
-            return _DEFAULT_GACHAS
-        return data
-    except (json.JSONDecodeError, OSError) as e:
-        print(f"경고: {GACHA_ITEMS_FILE.name} 로드 실패({e}) — 기본 아이템을 사용합니다.")
-        return _DEFAULT_GACHAS
+    except json.JSONDecodeError as e:
+        raise ValueError(f"{GACHA_ITEMS_FILE.name} JSON 파싱 실패: {e}") from e
+    except OSError as e:
+        raise OSError(f"{GACHA_ITEMS_FILE.name} 읽기 실패: {e}") from e
+
+    # 기본 검증: dict 형태이고 비어있지 않아야 함
+    if not isinstance(data, dict) or not data:
+        raise ValueError(f"{GACHA_ITEMS_FILE.name} 형식이 올바르지 않습니다. (최상위는 비어있지 않은 객체여야 함)")
+
+    # 최소 검증 — items가 없는 가챠는 에러로 처리 (부분 실패도 전체 차단)
+    invalid = []
+    for name, gacha in list(data.items()):
+        if not isinstance(gacha, dict) or "items" not in gacha or not isinstance(gacha["items"], dict) or not gacha["items"]:
+            invalid.append(name)
+        elif "desc" not in gacha:
+            # desc 누락은 경고가 아닌 에러로 처리
+            invalid.append(name)
+    if invalid:
+        raise ValueError(f"{GACHA_ITEMS_FILE.name} 에서 유효하지 않은 가챠 정의: {', '.join(invalid)}")
+
+    # 레어리티별 아이템 리스트가 모두 리스트 형태인지 검증
+    for name, gacha in data.items():
+        for rarity, lst in gacha["items"].items():
+            if not isinstance(lst, list):
+                raise ValueError(f"가챠 '{name}'의 레어리티 '{rarity}' 아이템 목록은 배열이어야 합니다.")
+
+    return data
 
 
-GACHAS = _load_gachas()
+try:
+    GACHAS = _load_gachas()
+except Exception as e:
+    GACHAS = {}
+    GACHAS_LOAD_ERROR = str(e)
+
+
+def _check_gachas_loaded():
+    """GACHAS 로드 실패 시 에러를 출력하고 True(차단 필요)를 반환."""
+    if GACHAS_LOAD_ERROR is not None or not GACHAS:
+        msg = GACHAS_LOAD_ERROR or f"{GACHA_ITEMS_FILE.name} 에 유효한 가챠 데이터가 없습니다."
+        print(f"\n{BRIGHT_RED}오류: {msg}{RESET}")
+        print(f"  {GACHA_ITEMS_FILE.name} 파일을 확인한 뒤 게임을 다시 실행해주세요.")
+        print("  게임 플레이가 차단되었습니다.")
+        return True
+    return False
 
 
 def resolve_gacha(gacha_name=None, gacha=None):
     # 가챠 해석 헬퍼 — 3중 분기 중복 제거 (가독성 ↑)
+    if _check_gachas_loaded():
+        raise RuntimeError(GACHAS_LOAD_ERROR or "GACHAS not loaded")
     if gacha is None and gacha_name is None:
         gacha_name = next(iter(GACHAS))
         return gacha_name, GACHAS[gacha_name]
@@ -245,10 +245,6 @@ def _update_clear_flags(data):
     # fully_cleared: 전체 아이템 클리어 여부
     data["legend_unlocked"] = {name: _is_legend_unlocked(data, name) for name in GACHAS}
     data["fully_cleared"] = {name: _is_all_cleared(data, name) for name in GACHAS}
-    # 구 버전 호환: cleared_legend_o/x 제거 — 존재하면 삭제
-    data.pop("cleared_legend_o", None)
-    data.pop("cleared_legend_x", None)
-    data.pop("cleared_legend", None)
     return data
 
 
@@ -356,6 +352,11 @@ def _is_legend_unlocked(data, gacha_name):
     return _GACHA_REMAINING_NON_LEGEND.get(gacha_name, 0) == 0
 
 
+def _is_hundred_unlocked(data, gacha_name):
+    # 100연챠는 SSR~N을 모두 모았을 때 LEGEND와 함께 해금
+    return _is_legend_unlocked(data, gacha_name)
+
+
 def _get_pity_rarity():
     # 천장은 LEGEND가 아닌 SSR에 적용 — 캐시 활용
     _ensure_rarity_cache()
@@ -364,6 +365,8 @@ def _get_pity_rarity():
 
 def pull_one(data, gacha_name=None, gacha=None):
     # 가격(PITY_LIMIT/SINGLE_COST)은 전역으로 통일, 진행도(pity)는 가챠별
+    if _check_gachas_loaded():
+        raise RuntimeError(GACHAS_LOAD_ERROR or "GACHAS not loaded")
     gacha_name, gacha = resolve_gacha(gacha_name, gacha)
 
     items = gacha["items"]
@@ -460,6 +463,9 @@ def pull_animation(count):
 
 
 def single_pull(data, gacha_name=None, gacha=None):
+    if _check_gachas_loaded():
+        wait_for_keypress("> 돌아가기")
+        return
     gacha_name, gacha = resolve_gacha(gacha_name, gacha)
 
     if data["coins"] < SINGLE_COST:
@@ -484,6 +490,9 @@ def single_pull(data, gacha_name=None, gacha=None):
 
 
 def ten_pull(data, gacha_name=None, gacha=None):
+    if _check_gachas_loaded():
+        wait_for_keypress("> 확인 완료")
+        return
     gacha_name, gacha = resolve_gacha(gacha_name, gacha)
 
     if data["coins"] < TEN_COST:
@@ -495,10 +504,10 @@ def ten_pull(data, gacha_name=None, gacha=None):
 
     results = [pull_one(data, gacha_name, gacha) for _ in range(10)]
 
-    print(f"\n  ───────── [{gacha_name}] 10연차 결과 ─────────")
+    print(f"\n  --------- [{gacha_name}] 10연챠 결과 ---------")
     for rarity, item, refund in results:
         show_result(rarity, item, refund)
-    print("  ───────────────────────────────")
+    print("  -------------------------------")
 
     total_refund = sum(refund for _, _, refund in results)
     dup_count = sum(1 for _, _, refund in results if refund > 0)
@@ -514,7 +523,98 @@ def ten_pull(data, gacha_name=None, gacha=None):
     wait_for_keypress("> 확인 완료")
 
 
+def hundred_pull(data, gacha_name=None, gacha=None):
+    if _check_gachas_loaded():
+        wait_for_keypress("> 확인 완료")
+        return
+    gacha_name, gacha = resolve_gacha(gacha_name, gacha)
+
+    if not _is_hundred_unlocked(data, gacha_name):
+        print(f"\n[{gacha_name}] 100연챠는 잠겨 있습니다.")
+        print("  SSR ~ N 등급을 모두 모으면 LEGEND와 함께 해금됩니다.")
+        remaining = _GACHA_REMAINING_NON_LEGEND.get(gacha_name)
+        if remaining is None:
+            _refresh_gacha_remaining_cache(data)
+            remaining = _GACHA_REMAINING_NON_LEGEND.get(gacha_name, 0)
+        total_non_legend = len(_GACHA_NON_LEGEND_KEYS.get(gacha_name, set()))
+        collected = total_non_legend - remaining
+        print(f"  진행도: SSR~N {collected}/{total_non_legend} ({remaining}개 남음)")
+        wait_for_keypress("> 확인 완료")
+        return
+
+    if data["coins"] < HUNDRED_COST:
+        print("\n코인이 부족합니다.")
+        wait_for_keypress("> 확인 완료")
+        return
+
+    pull_animation(100)
+
+    results = [pull_one(data, gacha_name, gacha) for _ in range(100)]
+
+    # ── 요약 집계 ──
+    _ensure_rarity_cache()
+    from collections import Counter, defaultdict
+
+    rarity_counts = Counter(r for r, _, _ in results)
+    # (rarity, item) -> [total, new_cnt, dup_cnt, refund_sum]
+    item_stats = {}
+    for rarity, item, refund in results:
+        key = (rarity, item)
+        if key not in item_stats:
+            item_stats[key] = [0, 0, 0, 0]
+        item_stats[key][0] += 1
+        if refund:
+            item_stats[key][2] += 1
+            item_stats[key][3] += refund
+        else:
+            item_stats[key][1] += 1
+
+    total_refund = sum(refund for _, _, refund in results)
+    dup_count = sum(1 for _, _, refund in results if refund > 0)
+    new_count = 100 - dup_count
+    # 신규 종류 수 (이번 100연챠에서 처음 획득한 아이템 종류)
+    new_types = sum(1 for v in item_stats.values() if v[1] > 0)
+
+    print(f"\n  --------- [{gacha_name}] 100연챠 결과 (요약) ---------")
+
+    for rarity in _RARITY_ORDER:
+        cnt = rarity_counts.get(rarity, 0)
+        if cnt == 0:
+            continue
+        # 레어리티 헤더
+        print(f"  [{rarity}] {rarity_symbol(rarity).strip()} - {cnt}개")
+        # 해당 레어리티 아이템들 정렬 (이름순)
+        entries = [(item, stats) for (r, item), stats in item_stats.items() if r == rarity]
+        entries.sort(key=lambda x: x[0])
+        for item, (total, new_c, dup_c, refund_sum) in entries:
+            sym = rarity_symbol(rarity)
+            if new_c and dup_c:
+                detail = f"{BRIGHT_GREEN}NEW {new_c}{RESET} / {BRIGHT_BLACK}중복 {dup_c} [+{refund_sum}P]{RESET}"
+            elif new_c:
+                detail = f"{BRIGHT_GREEN}NEW ×{total}{RESET}"
+            else:
+                detail = f"{BRIGHT_BLACK}중복 ×{total} [+{refund_sum}P]{RESET}"
+            print(f"    {sym}{item} ×{total}  {detail}{RESET}")
+
+    print("  ------------------------------------------")
+    # 전체 요약
+    rarity_summary = " / ".join(f"{r} {rarity_counts[r]}" for r in _RARITY_ORDER if rarity_counts.get(r))
+    print(f"  총 {100}회: {rarity_summary}")
+    print(f"  신규 {new_count}개 (종류 {new_types}종) / 중복 {dup_count}개 -> 총 {total_refund:,}P 환급")
+
+    pity = _get_pity(data, gacha_name)
+    pity_rarity = _get_pity_rarity()
+    print(f"  남은 코인: {data['coins']:,}P")
+    print(f"  {pity_rarity} 천장까지: {PITY_LIMIT - pity}회")
+
+    save_game(data)
+    wait_for_keypress("> 확인 완료")
+
+
 def _show_single_gacha_collection(data, gacha_name):
+    if _check_gachas_loaded():
+        wait_for_keypress("> 확인 완료")
+        return
     # 단일 가챠의 획득 현황 상세 출력 — 캐시 활용
     _ensure_rarity_cache()
     rarity_order = list(_RARITY_ORDER)
@@ -555,6 +655,9 @@ def _show_single_gacha_collection(data, gacha_name):
 
 
 def show_collection(data):
+    if _check_gachas_loaded():
+        wait_for_keypress("> 확인 완료")
+        return
     # 획득한 아이템이 없으면 선택 옵션 없이 바로 복귀
     if not data["collection"]:
         print("\n========== 획득 기록 ==========")
@@ -613,11 +716,18 @@ def reset_game(data):
 
 
 def show_status(data):
+    if _check_gachas_loaded():
+        wait_for_keypress("> 확인 완료")
+        return
     print("\n========== 상태 ==========")
     print(f"  보유 : {data['coins']:,}P")
     print(f"  총 뽑기 : {data['total_pulls']:,}회")
     print(f"  천장 : {PITY_LIMIT}회")
-    print(f"  1회 가격 : {SINGLE_COST:,}P / 10연차: {TEN_COST:,}P")
+    print(f"  가격 : 1회 {SINGLE_COST:,}P / 10연챠 {TEN_COST:,}P / 100연챠 {HUNDRED_COST:,}P")
+    # for name in GACHAS:
+    #     unlocked = _is_hundred_unlocked(data, name)
+    #     tag = f"{BRIGHT_GREEN}해금됨{RESET}" if unlocked else f"{BRIGHT_BLACK}잠김{RESET}"
+    #     print(f"    - {name}: 100연챠 {tag}")
     # for name in GACHAS:
     #     pity = _get_pity(data, name)
     #     remain = PITY_LIMIT - pity
@@ -640,10 +750,13 @@ def wait_for_keypress(comment=None):
 
 
 def gacha_menu(data):
+    if _check_gachas_loaded():
+        wait_for_keypress("> 돌아가기")
+        return
     while True:
         print("\n========== 가챠 선택 ==========")
         # 레어리티/가격/천장 한도는 공통, 진행도만 가챠별 — RARITIES를 그대로 표시
-        print(f"  공통: 1회 {SINGLE_COST:,}P / 10연차 {TEN_COST:,}P | {_get_pity_rarity()} 천장 {PITY_LIMIT}")
+        print(f"  공통: 1회 {SINGLE_COST:,}P / 10연챠 {TEN_COST:,}P / 100연챠 {HUNDRED_COST:,}P | {_get_pity_rarity()} 천장 {PITY_LIMIT}")
         rarity_info = " | ".join(f"{name}: {prob}%" for name, prob, *_ in RARITIES)
         print(f"  {rarity_info}\n")
         gacha_names = list(GACHAS.keys())
@@ -672,6 +785,9 @@ def gacha_menu(data):
 
 
 def gacha_pull_menu(data, gacha_name, gacha):
+    if _check_gachas_loaded():
+        wait_for_keypress("> 돌아가기")
+        return
     while True:
         pity = _get_pity(data, gacha_name)
         remain = PITY_LIMIT - pity
@@ -684,8 +800,13 @@ def gacha_pull_menu(data, gacha_name, gacha):
         print(f"  보유 : {data['coins']:,}P")
         print(f"  천장 : {pity}/{PITY_LIMIT}\n")
         
+        hundred_unlocked = _is_hundred_unlocked(data, gacha_name)
         print(f"  1. 1회 뽑기 ({SINGLE_COST:,}P)")
-        print(f"  2. 10연차 ({TEN_COST:,}P)")
+        print(f"  2. 10연챠 ({TEN_COST:,}P)")
+        if hundred_unlocked:
+            print(f"  3. 100연챠 ({HUNDRED_COST:,}P)")
+        else:
+            print(f"  3. 100연챠 ({HUNDRED_COST:,}P) {BRIGHT_BLACK}[잠김]{RESET}")
         print("  0. 뒤로가기")
         
         choice = input("\n  선택 > ").strip()
@@ -693,6 +814,8 @@ def gacha_pull_menu(data, gacha_name, gacha):
             single_pull(data, gacha_name, gacha)
         elif choice == "2":
             ten_pull(data, gacha_name, gacha)
+        elif choice == "3":
+            hundred_pull(data, gacha_name, gacha)
         elif choice == "0":
             return
         else:
@@ -708,6 +831,9 @@ def show_game_instructions():
     wait_for_keypress("> 확인 완료")
 
 def main():
+    if _check_gachas_loaded():
+        print("\n게임을 종료합니다.")
+        return
     data = load_save()
 
     while True:
