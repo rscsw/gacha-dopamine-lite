@@ -83,7 +83,10 @@ def _ensure_rarity_cache():
 # ── 가챠 종류 정의 ──
 # 레어리티(확률/환급/색상/심볼), 가격, 천장 한도는 전역 상수(RARITIES/SINGLE_COST/TEN_COST/PITY_LIMIT)로 통일됩니다.
 # 가챠별로 items(보상 목록)와 천장 도달율(진행도)만 따로 관리됩니다.
-GACHAS = {
+# 아이템 정의는 외부 JSON(gacha_items.json)에서 로드하여 코드 수정 없이 아이템을 관리할 수 있습니다.
+GACHA_ITEMS_FILE = Path(__file__).with_name("gacha_items.json")
+
+_DEFAULT_GACHAS = {
     "별빛 가챠": {
         "items": {
             "LEGEND": ["별의 수호자", "빛의 정령"],
@@ -115,6 +118,33 @@ GACHAS = {
         "desc": "도심 속 숨겨진 보물을 찾아보세요!",
     },
 }
+
+
+def _load_gachas():
+    """gacha_items.json에서 가챠 아이템 정의를 로드. 실패 시 기본값 반환."""
+    if not GACHA_ITEMS_FILE.exists():
+        return _DEFAULT_GACHAS
+    try:
+        with GACHA_ITEMS_FILE.open("r", encoding="utf-8") as f:
+            data = json.load(f)
+        # 기본 검증: dict 형태이고 각 가챠에 items/desc가 있는지 확인
+        if not isinstance(data, dict) or not data:
+            print(f"경고: {GACHA_ITEMS_FILE.name} 형식이 올바르지 않아 기본 아이템을 사용합니다.")
+            return _DEFAULT_GACHAS
+        # 최소 검증 — items가 없는 가챠는 기본값으로 대체하지 않고 경고만
+        for name, gacha in list(data.items()):
+            if not isinstance(gacha, dict) or "items" not in gacha:
+                print(f"경고: 가챠 '{name}' 정의가 올바르지 않아 제외됩니다.")
+                data.pop(name, None)
+        if not data:
+            return _DEFAULT_GACHAS
+        return data
+    except (json.JSONDecodeError, OSError) as e:
+        print(f"경고: {GACHA_ITEMS_FILE.name} 로드 실패({e}) — 기본 아이템을 사용합니다.")
+        return _DEFAULT_GACHAS
+
+
+GACHAS = _load_gachas()
 
 
 def resolve_gacha(gacha_name=None, gacha=None):
